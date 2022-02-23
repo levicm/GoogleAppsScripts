@@ -1,0 +1,151 @@
+// trello credentials
+var api_key = "...";
+var api_token = "...";
+
+// global variables
+var url = "https://api.trello.com/1/";
+var key_and_token = "key="+api_key+"&token="+api_token;
+
+// called on sheet open - add menu option
+function onOpen() {
+  var menuEntries = [ {name: "Update from Trello", functionName: "main"},];
+  SpreadsheetApp.getActiveSpreadsheet().addMenu("Trello", menuEntries);
+}
+
+function getBoardId(ss, ui) {
+  var board_id = ss.getRange('F7').getDisplayValue().replace(/\s/g, "");
+  if (board_id == "") {
+    var result = ui.prompt(
+      'Trello Board ID',
+      'Could not found Trello Board Id on cell F7. Please inform the desired board id:',
+      ui.ButtonSet.OK_CANCEL);
+    if (result.getSelectedButton() == ui.Button.OK)
+      board_id = result.getResponseText();
+    else
+      board_id = null;
+  }
+  Logger.log(board_id);
+  return board_id;
+}
+
+function getLists(board_id) {
+  lists = null;
+  try {
+    response = UrlFetchApp.fetch(url + "boards/" + board_id + "/lists?cards=all&" + key_and_token);
+    lists = JSON.parse((response.getContentText()));
+  } catch(e) {
+    Logger.log(e);
+    message = "Error acessing Trello API!"; 
+    if (e.message.indexOf("invalid id")>-1) { 
+      message = message + " Board Id not found: " + board_id;
+    }
+    ui.alert(message);
+  }
+
+  Logger.log(lists);
+  return lists;
+}
+
+function getSelectedList(ui, lists) {
+  selected_list = null;
+
+  str_lists = "";
+  for (var i=0; i < lists.length; i++) {
+    str_lists = str_lists + lists[i].name + "\r\n";
+  }
+
+  result = ui.prompt(
+      'Choose a Trello list',
+      'Please inform the desired list name, or leave empty for all lists:\n\n' + str_lists + "\n",
+      ui.ButtonSet.OK_CANCEL);
+
+  if (result.getSelectedButton() == ui.Button.OK)
+    selected_list = result.getResponseText();
+
+  Logger.log(selected_list);
+  return selected_list;
+}
+
+function getLineSpacing(ui) {
+  result = ui.prompt(
+      'Line spacing',
+      'Please inform the number of empty rows between the registries, or leave empty for 0\n',
+      ui.ButtonSet.OK_CANCEL);
+  if (result.getSelectedButton() == ui.Button.CANCEL) 
+    return -1;
+
+  spacing = 0;
+  strSpacing = result.getResponseText();
+  if (strSpacing != "") {
+    spacing = parseInt(strSpacing);
+  }
+  Logger.log(spacing);
+  return spacing;
+}
+
+
+//called by google docs on the menu click
+function main() {
+//  var ss = SpreadsheetApp.getActiveSheet().clear();
+  var ss = SpreadsheetApp.getActiveSheet();
+  var ui = SpreadsheetApp.getUi();
+  
+  var board_id = getBoardId(ss, ui);
+  if (board_id == null) return;
+
+  var lists = getLists(board_id);
+  if (lists == null) return;
+
+  var selected_list = getSelectedList(ui, lists);
+  if (selected_list == null) return;
+
+  var line_spacing = getLineSpacing(ui);
+  
+  for (var i=0; i < lists.length; i++) {
+    var list = lists[i];
+    Logger.log(list.name);
+    if (selected_list == "" || selected_list == list.name) {
+      //if(!list.closed) continue; //ignore open
+      //Logger.log(list);
+      
+      var response = UrlFetchApp.fetch(url + "list/" + list.id + "/cards?" + key_and_token);
+      var cards = JSON.parse(response.getContentText());
+      if(!cards) continue;
+      
+      for (var j=0; j < cards.length; j++) {
+        var card = cards[j];
+        
+        var list_name = list.name;
+        var card_name = card.name;
+        var card_desc = card.desc;
+        var link = card.url;
+        var due = card.due;
+        if (due != null) 
+          due = Utilities.formatDate(new Date(due), 'America/Recife', 'dd/MM/yyyy');
+
+        var response = UrlFetchApp.fetch(url + "cards/" + card.id + "/?actions=all&" + key_and_token);
+        var card_details = JSON.parse(response.getContentText()).actions;
+        Logger.log(card_details);
+        if(!card_details) continue;
+        card_detail = card_details[card_details.length - 1];
+        var date = Utilities.formatDate(new Date(card_detail.date), 'America/Recife', 'dd/MM/yyyy');
+        var member_name = card_detail.memberCreator.fullName;          
+        //var labelname = card_detail.labeldetails.name;
+
+        Logger.log(member_name);
+        Logger.log(card_name);
+        Logger.log(date);
+        Logger.log(due);
+        Logger.log(link);
+        Logger.log(list_name);
+        // Append row...
+        ss.appendRow([member_name, card_name, date, due, , card_desc, list_name]);
+
+        // Append spaces...
+        for (var k = 0; k < line_spacing; ++k) {
+          ss.appendRow([" "]);
+        }
+      }
+    }
+  }
+}
